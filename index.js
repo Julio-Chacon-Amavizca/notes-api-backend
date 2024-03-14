@@ -1,52 +1,85 @@
+require('dotenv').config()
+require('./mongo')
+const { ProfilingIntegration } = require('@sentry/profiling-node')
 const express = require('express')
 const app = express()
-const logger = require('./loggerMiddleware')
 const cors = require('cors')
+const Note = require('./models/Note')
+const notFound = require('./middleware/notFound')
+const handleErrors = require('./middleware/handleErrors')
+const Sentry = require('@sentry/node')
+const { default: mongoose } = require('mongoose')
+const usersRouter = require('./controllers/users')
 
 app.use(cors())
 app.use(express.json())
-app.use(logger)
+app.use('/images', express.static('images'))
 
-let notes = [
-  {
-    id: 1,
-    content: 'HTML is easy',
-    date: '2019-05-30T17:30:31.098Z',
-    important: true
-  },
-  {
-    id: 2,
-    content: 'Browser can execute only Javascript',
-    date: '2019-05-30T18:39:34.091Z',
-    important: false
-  },
-  {
-    id: 3,
-    content: 'GET and POST are the most important methods of HTTP protocol',
-    date: '2019-05-30T19:20:14.298Z',
-    important: true
-  }
-]
+Sentry.init({
+  dsn: 'https://dc8bcf852870db1173aa1746c944863e@o4506907120828416.ingest.us.sentry.io/4506907157004288',
+  integrations: [
+    // enable HTTP calls tracing
+    new Sentry.Integrations.Http({ tracing: true }),
+    // enable Express.js middleware tracing
+    new Sentry.Integrations.Express({ app }),
+    new ProfilingIntegration()
+  ],
+  // Performance Monitoring
+  tracesSampleRate: 1.0, //  Capture 100% of the transactions
+  // Set sampling rate for profiling - this is relative to tracesSampleRate
+  profilesSampleRate: 1.0
+})
+
+// El controlador de solicitudes debe ser el primer middleware en la aplicación
+app.use(Sentry.Handlers.requestHandler())
+
+// TracingHandler crea un rastro para cada solicitud entrante
+app.use(Sentry.Handlers.tracingHandler())
 
 app.get('/', (req, res) => {
   res.send('<h1>Hello World!</h1>')
 })
-
-app.get('/api/notes', (req, res) => {
+// la siguiente funcion es para que se nos muestren todas las notas en la base de datos de mongo en JSON
+app.get('/api/notes', async (req, res) => {
+  const notes = await Note.find({})
   res.json(notes)
 })
-
-app.get('/api/notes/:id', (req, res) => {
-  const id = Number(req.params.id)
-  const note = notes.find(note => note.id === id)
-  if (note) {
-    res.json(note)
-  } else {
-    res.status(404).end()
-  }
+// la siguiente funcion es para que se nos muestre una nota en particular en la base de datos de mongo en JSON
+app.get('/api/notes/:id', (req, res, next) => {
+  const { id } = req.params
+  Note.findById(id).then(note => {
+    if (note) {
+      res.json(note)
+    } else {
+      res.status(404).end()
+    }
+  }).catch(err => next(err))
 })
+// La siguiente funcion es para actualizar una nota en la base de datos de mongo
+app.put('/api/notes/:id', (req, res, next) => {
+  const { id } = req.params
+  const note = req.body
 
-app.post('/api/notes', (req, res) => {
+  const newNoteInfo = {
+    content: note.content,
+    important: note.important
+  }
+
+  Note.findByIdAndUpdate(id, newNoteInfo, { new: true })
+    .then(result => {
+      res.json(result)
+    }).catch(err => next(err))
+})
+// La siguiente funcion es para borrar una nota en la base de datos de mongo
+app.delete('/api/notes/:id', async (req, res, next) => {
+  const { id } = req.params
+  const results = await Note.findByIdAndDelete(id)
+  if (results === null) return res.sendStatus(404)
+
+  res.status(204).end()
+})
+// La siguiente funcion es para postear una nueva nota en la base de datos de mongo
+app.post('/api/notes', async (req, res, next) => {
   const note = req.body
 
   if (!note || !note.content) {
@@ -55,34 +88,43 @@ app.post('/api/notes', (req, res) => {
     })
   }
 
-  const ids = notes.map(note => note.id)
-  const maxId = Math.max(...ids)
-  const newNote = {
-    id: maxId + 1,
+  const newNote = new Note({
     content: note.content,
-    date: new Date().toISOString(),
-    important: typeof note.important !== 'undefined' ? note.important : false
-  }
-
-  notes = [...notes, newNote]
-  console.log(note)
-  res.status(201).json(note)
-})
-
-app.delete('/api/notes/:id', (req, res) => {
-  const id = Number(req.params.id)
-  notes = notes.filter(note => note.id !== id)
-  res.status(204).end()
-})
-
-app.use((req, res) => {
-  res.status(404).json({
-    error: 'Not found'
+    date: new Date(),
+    important: note.important || false
   })
+
+  // newNote.save().then(savedNote => {
+  //   res.json(savedNote)
+  // }).catch(err => next(err))
+  try {
+    const saveNote = await newNote.save()
+    res.json(saveNote)
+  } catch (err) {
+    next(err)
+  }
 })
 
-const PORT = process.env.PORT || 3001
+// La siguiente funcion es para los usuarios
+app.use('/api/users', usersRouter)
 
-app.listen(PORT, () => {
+// La siguiente funcion es para manejar errores 404
+app.use(notFound)
+// El manejador de errores debe registrarse antes que cualquier otro middleware de errores y después de todos los controladores
+app.use(Sentry.Handlers.errorHandler())
+// La siguiente funcion es para manejar errores 500
+app.use(handleErrors)
+// Se define el puerto en el que se va a correr el servidor en una variable de entorno para que sea mas facil de cambiar
+// en caso de que sea necesario en el futuro y se le asigna el valor de la variable de entorno PORT
+// en caso de que no exista la variable de entorno PORT se le asigna el valor 3001
+const PORT = process.env.PORT
+
+const server = app.listen(PORT, () => {
   console.log(`Server is listening on port ${PORT}`)
 })
+
+process.on('uncaughtException', () => {
+  mongoose.connection.disconnect()
+})
+
+module.exports = { app, server }
