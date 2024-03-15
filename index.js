@@ -11,6 +11,8 @@ const Sentry = require('@sentry/node')
 const { default: mongoose } = require('mongoose')
 const usersRouter = require('./controllers/users')
 const User = require('./models/User')
+const loginRouter = require('./controllers/login')
+const userExtractor = require('./middleware/userExtractor')
 
 app.use(cors())
 app.use(express.json())
@@ -60,7 +62,7 @@ app.get('/api/notes/:id', (req, res, next) => {
   }).catch(err => next(err))
 })
 // La siguiente funcion es para actualizar una nota en la base de datos de mongo
-app.put('/api/notes/:id', (req, res, next) => {
+app.put('/api/notes/:id', userExtractor, (req, res, next) => {
   const { id } = req.params
   const note = req.body
 
@@ -75,7 +77,7 @@ app.put('/api/notes/:id', (req, res, next) => {
     }).catch(err => next(err))
 })
 // La siguiente funcion es para borrar una nota en la base de datos de mongo
-app.delete('/api/notes/:id', async (req, res, next) => {
+app.delete('/api/notes/:id', userExtractor, async (req, res, next) => {
   const { id } = req.params
   const results = await Note.findByIdAndDelete(id)
   if (results === null) return res.sendStatus(404)
@@ -84,13 +86,14 @@ app.delete('/api/notes/:id', async (req, res, next) => {
 })
 // La siguiente funcion es para postear una nueva nota en la base de datos de mongo
 
-app.post('/api/notes', async (request, response, next) => {
+app.post('/api/notes', userExtractor, async (request, response, next) => {
   const {
     content,
-    important = false,
-    userId
+    important = false
   } = request.body
 
+  // sacar el userId del request
+  const { userId } = request
   const user = await User.findById(userId)
 
   if (!content) {
@@ -124,7 +127,8 @@ app.post('/api/notes', async (request, response, next) => {
 
 // La siguiente funcion es para los usuarios
 app.use('/api/users', usersRouter)
-
+// La siguiente funcion es para inicio de sesion
+app.use('/api/login', loginRouter)
 // La siguiente funcion es para manejar errores 404
 app.use(notFound)
 // El manejador de errores debe registrarse antes que cualquier otro middleware de errores y después de todos los controladores
