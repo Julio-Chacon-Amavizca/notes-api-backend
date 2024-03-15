@@ -11,10 +11,10 @@ const noteSchema = new Schema({
   }
 },
 {
-// Transformar el objeto a JSON
+  // Transformar el objeto a JSON
   toJSON: {
     transform: (document, returnedObject) => {
-      returnedObject.id = returnedObject._id.toString()
+      returnedObject.id = returnedObject._id
       delete returnedObject._id
       delete returnedObject.__v
     }
