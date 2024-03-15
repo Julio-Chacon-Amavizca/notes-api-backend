@@ -88,10 +88,11 @@ test('a note can be deleted', async () => {
   expect(contents).not.toContain(noteToDelete.content)
 })
 
-test('a note that has an invalid id can not be deleted', async () => {
+test('a note that has a valid id but do not exist can not be deleted', async () => {
+  const validObjectIdThatDoNotExist = '60451827152dc22ad768f442'
   await api
-    .delete('/api/notes/123')
-    .expect(400)
+    .delete(`/api/notes/${validObjectIdThatDoNotExist}`)
+    .expect(404)
 
   const { response } = await getAllContentFromNotes()
 

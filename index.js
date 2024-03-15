@@ -10,6 +10,7 @@ const handleErrors = require('./middleware/handleErrors')
 const Sentry = require('@sentry/node')
 const { default: mongoose } = require('mongoose')
 const usersRouter = require('./controllers/users')
+const User = require('./models/User')
 
 app.use(cors())
 app.use(express.json())
@@ -41,7 +42,10 @@ app.get('/', (req, res) => {
 })
 // la siguiente funcion es para que se nos muestren todas las notas en la base de datos de mongo en JSON
 app.get('/api/notes', async (req, res) => {
-  const notes = await Note.find({})
+  const notes = await Note.find({}).populate('user', {
+    username: 1,
+    name: 1
+  })
   res.json(notes)
 })
 // la siguiente funcion es para que se nos muestre una nota en particular en la base de datos de mongo en JSON
@@ -79,27 +83,40 @@ app.delete('/api/notes/:id', async (req, res, next) => {
   res.status(204).end()
 })
 // La siguiente funcion es para postear una nueva nota en la base de datos de mongo
-app.post('/api/notes', async (req, res, next) => {
-  const note = req.body
 
-  if (!note || !note.content) {
-    return res.status(400).json({
-      error: 'note.content is missing'
+app.post('/api/notes', async (request, response, next) => {
+  const {
+    content,
+    important = false,
+    userId
+  } = request.body
+
+  const user = await User.findById(userId)
+
+  if (!content) {
+    return response.status(400).json({
+      error: 'required "content" field is missing'
     })
   }
 
   const newNote = new Note({
-    content: note.content,
+    content,
     date: new Date(),
-    important: note.important || false
+    important,
+    user: user._id
   })
 
   // newNote.save().then(savedNote => {
-  //   res.json(savedNote)
+  //   response.json(savedNote)
   // }).catch(err => next(err))
+
   try {
-    const saveNote = await newNote.save()
-    res.json(saveNote)
+    const savedNote = await newNote.save()
+
+    user.notes = user.notes.concat(savedNote._id)
+    await user.save()
+
+    response.json(savedNote)
   } catch (err) {
     next(err)
   }
